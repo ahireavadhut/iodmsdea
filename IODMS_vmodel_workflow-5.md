@@ -1,7 +1,9 @@
-# IODMS – V-Model Workflow Guide
+# IODMS – V-Model Workflow Guide (v4)
 ## Who this is for: First-year Aviation intern, non-CSE background, learning as you go
-## Stack: React (Material UI) + FastAPI + PostgreSQL
-## Tooling: Claude Code or Google Antigravity — agentic tools that read and edit your project folder directly, instead of you copy-pasting files into a chat window
+## Stack: React + Material UI · FastAPI / Python · PostgreSQL
+## AI tooling: Claude Code and/or Google Antigravity (agentic, filesystem-aware coding tools)
+
+> **What changed in this version:** Requirements moved from v1 → v2 (FR-001–054 → FR-000–154, 4 modules → 11 modules, terminology renamed throughout) — that's what v3 of this guide covered. **v4 swaps the working method from "paste documents into a chat box" to using an agentic coding tool (Claude Code or Google Antigravity) that reads and writes your project files directly.** The Two Rules below are unchanged in spirit, but how you *enforce* them changes — see the new section right after this one.
 
 ---
 
@@ -37,352 +39,358 @@ You are currently between Phase 1 (done) and Phase 2A (starting next).
 
 ---
 
+## The Two Rules This Whole Guide Follows
+
+1. **Two-file rule.** At any point in the project, AI is fed at most **two** documents: `IODMS_requirements_v2.md` (frozen, never edited) and `IODMS_design.md` (the one evolving technical document — schema, architecture, file list, config, test log all live inside it as sections). No `schema.sql`, no separate `folder_structure.md`, no pile of config files. One doc accumulates everything technical; one doc is the unchanging source of truth.
+2. **Minimum file count rule.** The codebase itself is grouped by *module-group*, not by every individual FR or table. One backend router file and one frontend page file per module-group, plus a small shared core. This directly satisfies `NFR-012` ("minimum number of source files... maintainable by a single developer").
+
+Keep both rules in mind through every phase below.
+
+---
+
+## If You're Using Claude Code or Antigravity
+
+Both are **agentic** tools: you point them at a project folder and they read, write, and run files themselves — there's no chat box to paste documents into. This changes *how* the Two Rules get enforced, not the rules themselves.
+
+**1. Set up your project folder first.**
+Create an empty folder (e.g. `IODMS/`), put `IODMS_requirements_v2.md` in it, and `git init`. Open that folder as your workspace in Claude Code (`claude` in the terminal, inside the folder) or as a Project in Antigravity (Select Project → New Project → Add Folder).
+
+**2. Replace manual pasting with a persistent context file — this is how the Two-File Rule survives without you re-pasting anything.**
+
+| Tool | File to create at project root | What goes in it |
+|---|---|---|
+| **Claude Code** | `CLAUDE.md` | Short instructions, not the full documents — see below. Read automatically every session. |
+| **Antigravity** | `AGENTS.md` (or `.agents/rules/project-context.md` set to **Always On**) | Same content. Read automatically every session; rules are capped at 12,000 characters so keep it short. |
+
+Put something like this in whichever file applies:
+
+```markdown
+# IODMS Project Rules
+
+Before any task in this repo, read in full:
+- IODMS_requirements_v2.md (frozen — never edit this file)
+- IODMS_design.md (the one evolving technical doc — schema, file tree,
+  LAN config, and test log all live here as sections)
+
+Never paste, summarise, or re-derive a third standalone design document.
+If new technical decisions are needed, add a new section to
+IODMS_design.md — do not create schema.sql, folder_structure.md,
+config.md, or any other separate file.
+
+Use only canonical terms from the Terminology Reference table in
+IODMS_requirements_v2.md (Folder, Compose Outward, Drafts & Dispatch,
+Log Inward, Assign To, Prepared By, etc.) — never legacy names.
+
+The file tree in IODMS_design.md Section C is fixed at 20 files
+(10 backend + 10 frontend). Do not create a new file outside that list
+without asking first — group new logic into an existing file instead.
+
+Every function/endpoint needs a one-line comment naming the FR ID(s)
+it implements.
+```
+
+This means you literally never paste `IODMS_requirements_v2.md` or `IODMS_design.md` into a prompt again — the agent re-reads both at the start of every session because `CLAUDE.md`/`AGENTS.md` tells it to. Your job shifts from "remember to paste the right files" to "check the agent actually opened both files" (Claude Code and Antigravity both show a visible "Read file" tool call — glance at it before trusting the output).
+
+**3. Keep a human in the loop, especially early on.**
+Both tools default to (or offer) an autopilot mode — Claude Code can be told to auto-approve edits; Antigravity calls this "Agent-driven." Don't use it for this project yet. Use Claude Code's normal per-action confirmation, or Antigravity's **Agent-assisted** or **Review-driven** mode. `NFR-013` says AI must not assume beyond what's written — autopilot makes it much easier to miss a wrong assumption before it's already written to disk.
+
+**4. Don't parallelise the dependency order.**
+Antigravity's Manager view can run several agents at once across a project. The Step 2 generation order below is sequential on purpose (`models.py` before `auth.py` before the routers) — running it in parallel risks two agents both deciding to touch `models.py`. If you do try parallel agents, only do it across independent frontend pages that don't share state (e.g. `AddressBook.jsx` alongside `MyProfile.jsx`), never across the backend dependency chain.
+
+**5. Remember the air gap applies to the deployed system, not your laptop.**
+Claude Code and Antigravity both call a cloud model over the internet — neither can run on the actual air-gapped server PC. Do all AI-assisted development on an ordinary internet-connected dev machine. `NFR-014`/`EIR-002` (no live internet calls, offline installers via USB) describe the *finished, deployed* IODMS system — not your development environment. Only the built code crosses onto the air-gapped PC, carried over by USB, same as before.
+
+---
+
 ## Phase 1 — Requirements ✅ DONE
 
 You interviewed the stakeholders (by looking at the old software), wrote down every screen, every field, every behaviour. That became the SRS.
 
 **Outputs you already have:**
-- SRS Word document
-- Requirements context markdown (with FR-001 to FR-054)
+- `IODMS_requirements_v2.md` — FR-000 to FR-154 across 11 modules (Module 0 Auditor View through Module 10 My Profile), full DB schema (11 tables), NFRs, EIRs, RBAC table, terminology reference
 - This workflow file
 
----
-
-## Set Up the Repo First (so the agent can find everything itself)
-
-With a chat-based AI, you had to paste the requirements file into every new conversation. Claude Code and Antigravity both work directly on your project folder, so instead of pasting, you **save files once and reference them by path.** Create this structure before Step 1:
-
-```
-IODMS/
-├── CLAUDE.md                     ← Claude Code reads this automatically at the start of every session
-├── docs/
-│   ├── IODMS_requirements_context.md
-│   ├── hld.md                    ← created in Step 1
-│   └── technical_design.md       ← created in Step 2 (schema.sql + folder tree)
-├── backend/                       ← created in Step 3
-└── frontend/                      ← created in Step 3
-```
-
-**`CLAUDE.md`** (Claude Code only — Antigravity doesn't need this file, see note below) is a short instruction file Claude Code loads automatically every time you start it in this folder. Put something like this in it:
-
-```markdown
-# IODMS Project Instructions
-
-Before doing anything, read docs/IODMS_requirements_context.md.
-If docs/technical_design.md exists, read that too — it is the current
-schema + folder structure and supersedes anything older in docs/.
-
-Rules for all code you write:
-- Add a comment above every function naming the FR ID it implements
-  (e.g. "# FR-016: ...")
-- Keep comments simple enough for a non-CSE beginner to understand
-- I am a first-year non-CSE intern learning as I go — explain anything complex
-```
-
-This replaces the old "paste the context file every session" rule — you only write this once.
-
-**If you're using Antigravity instead:** open the `IODMS/` folder as your Antigravity project. Antigravity doesn't use a `CLAUDE.md` file, but its agents read whatever is in the opened project folder, and its knowledge base saves useful context across tasks automatically. Just make sure `docs/IODMS_requirements_context.md` exists before you start Step 1, and mention it by name in your first prompt of each session (e.g. "Read docs/IODMS_requirements_context.md first").
-
-**If you're using both:** keep the repo structure identical — it works for either tool, you're just choosing which agent acts on it per session.
+**One thing to never forget:** the requirements doc has a **Terminology Reference** table (Folder, Folder ID, Compose Outward, Drafts & Dispatch, Log Inward, Assign To, Prepared By, etc.). Every prompt should use these canonical terms — never the old legacy names ("Create File", "Finalise File", "Inward Entry", "Referred To"). If the agent ever outputs a legacy term, that's a sign it didn't actually read the requirements doc this session — check that `CLAUDE.md`/`AGENTS.md` is present and ask it to re-read both files before continuing.
 
 ---
 
 ## Phase 2A — Standalone PC Design
 
-**What standalone means:** The server and the user are on the same computer. No network, no other PCs. This keeps things simple for the first build. You are just making sure the software works correctly before worrying about multiple users on a network.
+**What standalone means:** The server and the user are on the same computer. No network, no other PCs. You are just making sure the software works correctly before worrying about multiple users on a network.
 
-This phase has **3 steps**. Each step produces a document, saved into `docs/`. The agent generates each document and writes the file itself — your job is to read it, check it makes sense, and ask questions if something doesn't match what you know about the software.
+This phase now has **2 steps**, not 4 — Architecture, Schema, and File Structure are produced together as one document, because they're really one decision (what exists → where it lives → how it's filed), and splitting them into three separate hand-offs was the main source of file pile-up.
 
 ---
 
-### Step 1 — High Level Design (HLD)
+### Step 1 — Design Document
 
-**① Inputs (already in the repo — nothing to paste)**
-- `docs/IODMS_requirements_context.md` — the agent needs FR-001 to FR-054 and the 3 main workflows (create outward file, inward entry, finalise file) to know what it is designing.
-- Nothing else. No code, no schema yet — none of that exists.
+**① What to feed in**
+- `IODMS_requirements_v2.md` — nothing else. No code, no schema, no file tree exist yet. With Claude Code/Antigravity, this just means: the file sits in your project folder and `CLAUDE.md`/`AGENTS.md` is already in place per the previous section — you don't paste it manually.
 
 **② What to do in this step**
+AI generates **one** file: `IODMS_design.md`, with three sections.
 
-Prompt:
-```
-Read docs/IODMS_requirements_context.md.
-Write a 2-page HLD to docs/hld.md.
-```
-
-It describes the 3 system components and how they connect:
+**Section A — Architecture.** A short HLD describing the 3 system components and how they connect:
 
 ```
 Browser (React + Material UI)  →  FastAPI (Python)  →  PostgreSQL (Database)
                                         ↕
                                    File System
-                                (the .docx files)
+                            (the .doc drafts/outward/inward folders)
 ```
 
-- **Browser (React + Material UI):** What the user sees and clicks on — forms, tables, and dropdowns built from Material UI components.
-- **FastAPI:** The middleman — receives requests from the browser, talks to the database, returns answers.
-- **PostgreSQL:** Stores every record — inward, outward, address book, users, all dropdown master lists.
-- **File system:** Folders on the PC where .docx files are saved and moved, following the fixed structure: `Drafts/`, `Outward/{Year}/{File Type}/`, `Inward/{Year}/{File Type}/`. File numbers (001, 002…) reset every year, separately for each File Type (e.g. Su‑30 resets independently of LCA).
+For each of the 3 main workflows — **Log Inward**, **Compose Outward → Drafts & Dispatch**, and **Auditor View** — trace the data end to end: what the user clicks, what FastAPI does, what goes into the database, what file moves where.
 
-For each of the 3 main workflows, the HLD traces the data flow end to end: what the user clicks, what FastAPI does, what goes into the database, what file moves where.
-
-Your job: Read `docs/hld.md`. If a flow description doesn't match how you remember the old software working, flag it before moving on.
-
-**③ Before moving to Step 2**
-- `docs/hld.md` should exist and be saved. Nothing to paste — Step 2 will read it from disk.
-
----
-
-### Step 2 — Technical Design (Database Schema + Folder/File Structure, combined)
-
-**① Inputs (already in the repo)**
-- `docs/IODMS_requirements_context.md` — contains the full table list, the file/folder structure, and what each stores.
-- `docs/hld.md` from Step 1 — shows which tables and files each workflow touches, so the schema and the code skeleton stay consistent with the flow.
-
-**② What to do in this step**
-
-Prompt:
-```
-Read docs/IODMS_requirements_context.md and docs/hld.md.
-Write the technical design to docs/technical_design.md, with two parts:
-Part A) schema.sql as a code block
-Part B) the full backend/frontend folder tree, one-line comment per file
-```
-
-One document, two parts, so only one file needs to be carried forward into Step 3.
-
-**Part A — `schema.sql`:** Each table is defined with `CREATE TABLE` statements — every column has a name, data type, and a comment explaining what it holds. The agent also generates a simple text diagram showing which tables reference which (foreign key links).
-
-Tables it will define:
+**Section B — Database Schema.** `CREATE TABLE` statements (with column comments) for all 11 tables, plus a text diagram of foreign keys:
 
 | Table | What it stores |
 |---|---|
-| `users` | Officer accounts, roles, passwords |
-| `designations` | Dropdown options for Designation field |
-| `organisations` | Dropdown options for Organisation field |
-| `folder_types` | Dropdown options for Folder Type field |
-| `address_groups` | The Categories used in Create File |
+| `users` | Officer accounts, PB No., DOB, role (User/Admin), bcrypt password hash |
+| `folder_types` | Folder ID ↔ Folder Name master list (`Su-30` → `Sukhoi Su-30 MKI`) |
+| `address_groups` | Address Group labels |
 | `address_book` | All addresses (migrated from legacy XLSX) |
-| `inward_register` | All inward records (migrated from legacy XLSX) |
-| `outward_register` | All finalised outward records (migrated from legacy XLSX) |
-| `draft_files` | Temporary outward drafts waiting to be finalised |
-| `audit_log` | Every action any user takes, with timestamp |
+| `received_from_list` | Name-only list for Log Inward "Received From" |
+| `originated_by_list` | Name-only list for Log Inward "Originated By" |
+| `inward_register` | All inward records (legacy migrated + new) |
+| `outward_register` | All dispatched outward records |
+| `draft_files` | Draft documents awaiting Dispatch, with `is_locked` / `locked_by` |
+| `pending_deletions` | Soft-deleted records awaiting Admin approval (any table) |
+| `pending_profile_edits` | User profile change requests awaiting Admin approval |
 
-The register/file-number columns in `outward_register`, `draft_files`, and `inward_register` must carry a comment noting they reset yearly, scoped per File Type — this is a confirmed requirement, not a placeholder.
+> ⚠️ There is **no `audit_log` table** — the requirements doc explicitly says one is not required. If AI adds one anyway, it wasn't reading the requirements closely; remove it.
 
-**Part B — Folder/file tree:** A full code folder tree, with a one-line comment on each file explaining its purpose. No code is written yet, this is just the skeleton.
+**Section C — File Structure.** A full file tree — every file listed with a one-line comment — grouped by *module-group*, not by individual FR or table:
 
-Why this matters: the agent generates code one file at a time. If the folder structure isn't locked first, it won't know where to import things from and files will contradict each other.
+```
+backend/
+├── main.py                  # FastAPI app, mounts all routers
+├── database.py              # PostgreSQL connection/session
+├── models.py                # ALL 11 tables defined here, heavily commented
+├── filesystem_utils.py      # shared: next-sequence-number logic, path builder, year rollover
+├── auth.py                  # Login, session/RBAC check, Dashboard birthday check, Auditor View
+└── routers/
+    ├── inward.py            # Module 5 Log Inward + Module 6 Inward Register
+    ├── outward.py           # Module 3 Compose Outward + Module 4 Drafts & Dispatch + Module 7 Outward Register
+    ├── address_book.py      # Module 8 Address Book
+    ├── admin.py             # Module 9, all five sub-tabs (9A–9E)
+    └── profile.py           # Module 10 My Profile
 
-To keep this maintainable by a single developer (and to keep future prompts shorter), the tree is organised into **4 modules** instead of one-per-screen:
+frontend/src/
+├── App.jsx                  # routing + RBAC route guards
+├── api.js                   # all API calls in one place
+└── pages/
+    ├── AuditorView.jsx      # Module 0
+    ├── Login.jsx            # Module 1
+    ├── Dashboard.jsx        # Module 2
+    ├── Outward.jsx          # Modules 3 + 4 + 7, as internal tabs: Compose / Drafts & Dispatch / Register
+    ├── Inward.jsx           # Modules 5 + 6, as internal tabs: Log Inward / Register
+    ├── AddressBook.jsx      # Module 8
+    ├── AdminPanel.jsx       # Module 9, internal tabs for 9A–9E
+    └── MyProfile.jsx        # Module 10
+```
 
-| Module | Combines | Notes |
-|---|---|---|
-| **Auth** | Login, session, password reset | Everything else depends on this |
-| **Admin & Address Book** | Admin Panel + Address Book | Shared master lists (designations, organisations, folder types, address groups) live here |
-| **Outward Management** | Create File + Finalise File + Outward Register | Includes the .docx draft generator and the file mover |
-| **Inward Management** | Inward Entry + Inward Register | Includes file upload / drag-and-drop for scanned documents — direct scanner-SDK integration has been dropped from requirements |
+That's **10 backend files + 10 frontend files = 20 source files** for the entire application. Compare that to one-file-per-table-and-per-FR-module, which would have been 30+. Long, well-commented files beat many short ones here — that's the whole point of `NFR-012`.
 
-Your job: Confirm every FR (FR-001 to FR-054) maps to one of these 4 modules — ask the agent to print the mapping if you're unsure anything was missed.
+Your job: read all three sections. Cross-check the Architecture section's three workflow traces against what you remember from the old software, cross-check every table column against the FR table, and confirm the file tree has a home for every one of the 11 modules. Flag anything before moving on — this is the only design artifact you'll have, so it needs to be right.
 
-**Tool to view the schema once created:** Use **DBeaver** (free). Connect it to PostgreSQL and browse your tables like a spreadsheet. Simpler than pgAdmin — install that, not pgAdmin.
+**③ What to feed into AI to execute the next step (Step 2)**
+- `IODMS_requirements_v2.md`
+- `IODMS_design.md`
 
-**③ Before moving to Step 3**
-- `docs/technical_design.md` should exist. That's the only new file Step 3 needs — `docs/IODMS_requirements_context.md` is still read automatically (via `CLAUDE.md`, or by name if using Antigravity).
+That's it — always exactly these two, for the rest of the project.
 
 ---
 
-### Step 3 — Code Generation (One Module at a Time)
+### Step 2 — Code Generation (One Module-Group at a Time)
 
-**① Inputs — per file**
+**① What to feed in — per file**
 
-For each file you ask the agent to generate, it needs:
-- `docs/IODMS_requirements_context.md` (auto-loaded)
-- `docs/technical_design.md` (auto-loaded, or mention it by name)
-- The already-written files that the current file depends on — the agent can read these straight from disk since they're in the same repo; you don't need to paste them either, just name them.
+With `CLAUDE.md`/`AGENTS.md` in place, you don't feed anything manually — the agent re-reads `IODMS_requirements_v2.md` and `IODMS_design.md` itself at the start of the session because the rules file tells it to. Your prompt only needs to name the file to generate and which modules/FRs it covers.
+
+Do **not** paste previously-generated code into the prompt either. `IODMS_design.md` already specifies every table, every function's FR coverage, and every import relationship — that's what it's *for*. If the agent needs to know that `routers/outward.py` imports from `models.py` and `filesystem_utils.py`, it gets that from the file tree comments in `IODMS_design.md` by reading the actual file on disk, not from you re-pasting it.
 
 **② What to do in this step**
 
-Generate code in this dependency order (things other things need go first):
+Generate code in this dependency order:
 
-1. Database connection setup
-2. All database table models (Python version of the schema)
-3. **Auth module** — everything else depends on this
-4. **Admin & Address Book module** — dropdowns need these before other modules can use them
-5. **Inward Management module** — Inward Entry (incl. file upload/drag-and-drop) + Inward Register
-6. **Outward Management module** — Create File + document generator + Finalise File + file mover + Outward Register
-7. Frontend pages — same order as backend
+1. `database.py` + `models.py` — nothing else can exist without these
+2. `filesystem_utils.py` — inward, outward, and drafts all need the same numbering/path logic
+3. `auth.py` — login and RBAC; every other router depends on the RBAC check
+4. `routers/address_book.py` and `routers/admin.py` — master lists (`folder_types`, `address_groups`, `received_from_list`, `originated_by_list`) must exist before other forms can populate their dropdowns
+5. `routers/inward.py`
+6. `routers/outward.py`
+7. `routers/profile.py`
+8. Frontend pages — same order: `App.jsx`/`api.js` → `Login.jsx`/`Dashboard.jsx`/`AuditorView.jsx` → `AddressBook.jsx`/`AdminPanel.jsx` → `Inward.jsx` → `Outward.jsx` → `MyProfile.jsx`
 
-Use this prompt pattern for every file:
+Use this prompt pattern for every file — short, because `CLAUDE.md`/`AGENTS.md` is already carrying the context:
 
 ```
-Read docs/technical_design.md if you haven't already.
+Generate backend/routers/outward.py.
 
-Now generate: backend/routers/inward.py
-Requirements this file covers: FR-016 to FR-033
-Files already written that this depends on: database.py, models/inward.py
+Modules this file covers: Module 3 (Compose Outward), Module 4
+(Drafts & Dispatch), Module 7 (Outward Register)
+Requirements this file covers: FR-030 to FR-057, FR-090 to FR-095
 
-Rules:
-- Add a comment above every function saying which FR ID it implements
-- Keep comments simple enough for a non-CSE beginner to understand
-- If something is complex, explain it in a comment before the code
+Before writing anything, confirm you've read IODMS_requirements_v2.md
+and IODMS_design.md for this session. Add a comment above every
+function naming the FR ID it implements. Keep comments simple enough
+for a non-CSE beginner to understand. This is one of only 10 backend
+files — keep related logic together here rather than creating a new
+file.
 ```
-
-(If `CLAUDE.md` already states the FR-comment rule and the "explain it simply" rule, you can drop the Rules block — it's shown here in case you're using Antigravity, which doesn't auto-load `CLAUDE.md`.)
 
 Every function must have an FR comment:
 
 ```python
-# FR-016: When user clicks New, generate the next Inward Number automatically
+# FR-061: Inward No. is auto-generated, read-only, shown at top of form
 @router.post("/inward/new")
 def create_inward_entry(...):
     ...
 ```
 
-This is how you trace every line of code back to a requirement. When something breaks, find the FR, find the function, fix it.
+This is how you trace every line of code back to a requirement. When something breaks, find the FR, find the function, fix it. Review each file the agent writes (the diff view in Claude Code, or the Artifact/diff in Antigravity) before moving to the next one in the dependency order — don't let it queue up all 10 files unreviewed.
 
-**③ Before moving to Phase 3A**
-- All code for the 4 modules exists in `backend/` and `frontend/`.
-- `docs/technical_design.md` is enough context for Phase 3A — it already contains the folder tree, so the agent knows which module implements which screen. **Do not** ask the agent to re-paste or summarise all the code into a new doc — test cases come from the requirements, not from the code.
+**③ What to feed into AI to execute Phase 3A**
+- `IODMS_requirements_v2.md`
+- `IODMS_design.md` — the file tree section tells AI which file implements which module, so it knows where to look when writing test cases.
 
 ---
 
 ## Phase 3A — Standalone Testing
 
-**① Inputs (already in the repo)**
-- `docs/IODMS_requirements_context.md` — the full FR list is the source of truth for what gets tested.
-- `docs/technical_design.md` — so the agent knows which module to reference per test case.
+**① What to feed in**
+- `IODMS_requirements_v2.md` — the full FR list (FR-000 to FR-154) is the source of truth for what gets tested.
+- `IODMS_design.md` — so AI references the right file per test case.
 
 **② What to do in this step**
-
-Prompt:
-```
-Read docs/IODMS_requirements_context.md and docs/technical_design.md.
-Write a test case document to docs/test_cases.md, one row per FR.
-```
+AI generates a test case document — one row per FR — appended as a new **Section D — Testing Log** inside `IODMS_design.md` (not a separate file). You run each test manually on the standalone PC and mark pass or fail.
 
 | TC ID | FR ID | What you test | What you do | What should happen |
 |---|---|---|---|---|
-| TC-001 | FR-001 | Subject field | Type text into Subject | Text appears correctly |
-| TC-016 | FR-016 | Inward No. auto-generate | Click New | INWD-2025-001 appears |
-| TC-018 | FR-018 | Scanned document upload | Drag-and-drop a file, or use the Upload button | File attaches to the inward record (no scanner driver involved) |
-| TC-013 | FR-013 | Finalise File | Click Finalise | Register No. generated, record moves to Outward Register |
+| TC-000 | FR-000 | Auditor View button | Open Login page | "View Registers (Auditor)" button visible below login form |
+| TC-061 | FR-061 | Inward No. auto-generate | Click New in Log Inward | `001` appears (or next number for that year/Folder ID) |
+| TC-054 | FR-054 | Dispatch | Click Dispatch on a draft | File renamed to next sequential number, moved to `Outward/{Year}/{FolderID}/`, record appears in Outward Register |
+| TC-121 | FR-121 | Approve deletion | Admin approves a pending deletion | Record and file permanently removed |
 
-**If you're using Antigravity:** its agents can drive a built-in browser themselves — ask it to step through `docs/test_cases.md` and record a screenshot or short video per test case, instead of you clicking through every row by hand. Still spot-check a handful yourself before signing off.
+If a test fails: note the FR ID, and point the agent at that specific function (file + line, or just the function name) plus the error message, and ask for a fix. **Do not** re-trigger a full re-read of the requirements/design pair for a single-function bug fix unless the fix needs broader context.
 
-**If you're using Claude Code:** ask it to write an automated test script (e.g. `pytest` + `Playwright`) covering the FR list and run it, then show you the pass/fail output. Treat that as a first pass — manually click through anything it reports as a fail, plus a few passes, before signing off.
-
-Either way: you run or review each test and mark pass or fail.
-
-If a test fails: note the FR ID, point the agent at the function with that FR comment plus the error, and ask for a fix.
-
-**③ Before moving to Phase 2C**
-- Signed-off `docs/test_cases.md` (all TCs marked passed).
-- `docs/technical_design.md` is still the schema/folder reference — LAN design adds network config and a shared network folder path on top of the same schema and folder tree; no table or module changes expected.
+**③ What to feed into AI to execute Phase 2C**
+- `IODMS_requirements_v2.md`
+- `IODMS_design.md` — now including the signed-off Testing Log section from this phase
 
 ---
 
 ## Phase 2C — LAN Network Design
 
-**① Inputs (already in the repo)**
-- `docs/IODMS_requirements_context.md` — specifically the deployment context: air-gapped LAN, central server PC, ~30 users, max 10 concurrent, Chromium browser on client PCs, no client-side install.
-- Signed-off `docs/test_cases.md` — confirms the standalone base is stable before adding network layer.
-- `docs/technical_design.md` — network config changes touch DB connection settings and the file-system path; the agent needs the existing schema + folder tree to generate correct config patches.
+**① What to feed in**
+- `IODMS_requirements_v2.md` — specifically: air-gapped LAN, central server PC, ~30 users / max 10 concurrent, Chromium-only (`NFR-008`/`NFR-009`/`NFR-010`), no client-side install.
+- `IODMS_design.md` — with the passed Testing Log section already inside it, confirming the standalone base is stable.
 
 **② What to do in this step**
 Very little new code. What changes from standalone:
 
 - FastAPI is configured to listen on the server PC's LAN IP, not just localhost.
 - PostgreSQL is configured to accept connections from other PCs on the same LAN.
-- The `Drafts/`, `Outward/`, `Inward/` folders move to a shared network path on the server PC so every client can reach the same files.
-- Session handling is verified to work correctly with up to 10 simultaneous users.
-- A simple install/access guide is written so other PCs can open the app in their browser with no install.
+- Session handling is verified with up to 10 simultaneous users (no timeout enforced, per `NFR-003`).
+- A one-page deployment guide is written for accessing the app from a Chromium browser with zero install.
 
-Prompt:
-```
-Read docs/IODMS_requirements_context.md and docs/technical_design.md.
-Update database.py, the uvicorn startup command, and pg_hba.conf for LAN access.
-Write docs/deployment_guide.md.
-```
+AI appends a new **Section E — LAN Deployment Config** to `IODMS_design.md` (connection string, `uvicorn` startup command, `pg_hba.conf` patch, deployment guide) — still the same single document, not new config files scattered around.
 
-Your job: Read `docs/deployment_guide.md`. It must match the actual physical setup — the server PC's fixed LAN IP, the shared network folder where .docx files are stored, and the Chromium browser on client machines.
+Your job: read the deployment section. It must match the physical setup — the server PC's fixed LAN IP, the configured IODMS root path (`NFR-140`/`EIR-003`), and Chromium 109 as the minimum supported client (`NFR-009`).
 
-**③ Before moving to Phase 3B**
-- Updated config files, saved in the repo.
-- `docs/test_cases.md` — Phase 3B reruns the same tests from a different PC, so the agent extends that document with LAN-specific additions rather than creating a new one.
+**③ What to feed into AI to execute Phase 3B**
+- `IODMS_requirements_v2.md`
+- `IODMS_design.md`
 
 ---
 
 ## Phase 3B & 3C — LAN Code Changes and Testing
 
-**① Inputs (already in the repo)**
-- `docs/IODMS_requirements_context.md`
-- `docs/test_cases.md`
-- Updated config files from Phase 2C
+**① What to feed in**
+- `IODMS_requirements_v2.md`
+- `IODMS_design.md`
 
 **② What to do in this step**
-Rerun every test from Phase 3A — this time from a different PC on the network, pointing the browser at the server PC's LAN IP.
+Rerun every test from the Testing Log section — this time from a different PC on the network, pointing the browser at the server PC's LAN IP. Append results as new rows in the same Testing Log section.
 
 Add these LAN-specific tests:
-
-- Two users editing different records at the same time — both changes save correctly.
-- Session timeout works across the network — user is logged out after inactivity.
-- File upload/drag-and-drop for Inward Entry still works when the `Inward/` folder is on the shared network path (no scanner hardware involved — that integration was dropped from requirements).
+- Two users editing different records at the same time — both changes save correctly
+- Two users attempting to open the same draft in MS Word at the same time — second user sees the "currently being edited by [User Name]" message (`FR-052`)
+- Auditor View accessed from a second PC with no credentials — register loads read-only, watermarked, copy-paste disabled (`FR-001`–`FR-007`)
 
 Pass all tests → Deployment done.
 
-**③ After deployment**
-No further agent sessions needed for standard deployment. If a bug appears post-deployment: point the agent at `docs/IODMS_requirements_context.md`, the specific function with its FR comment, and the error message. Nothing else.
+**③ What to feed into AI after deployment**
+No further AI sessions needed for standard deployment. If a bug appears post-deployment: open the project in Claude Code/Antigravity, point it at the specific function with its FR comment plus the error message. Nothing else — never the whole design document for a single function fix.
 
 ---
 
 ## What You Actually Need to Learn (Realistic, in Order)
 
-You do not need to write code from scratch. You need to read it and understand it enough to debug it with the agent's help.
+You do not need to write code from scratch. You need to read it and understand it enough to debug it with AI help.
 
 **Before Phase 2B starts (next few weeks):**
-- What is an API and what do GET / POST / PUT mean — watch one 20-minute YouTube video
-- What is a database table, what is a PRIMARY KEY, what is a FOREIGN KEY — one hour, just read examples
-- Basic Python syntax — functions, variables, if/else — not deep, just enough to read it
+- What is an API and what do GET / POST / PUT mean — one 20-minute video
+- What is a database table, PRIMARY KEY, FOREIGN KEY — one hour, read examples
+- Basic Python syntax — functions, variables, if/else — just enough to read it
+- What `bcrypt` password hashing means, in one sentence (you'll see it in `auth.py`)
 
-**While reviewing agent-generated code:**
+**While reviewing AI-generated code:**
 - FastAPI: what does `@router.get("/something")` mean
-- React: what is a component, what does `useState` do, what is a Material UI component — just read, don't memorise
+- React: what is a component, what does `useState` do — just read, don't memorise
 - PostgreSQL: how to run `SELECT * FROM inward_register` in DBeaver to check if data saved
+- What "RBAC" means and why `auth.py` checks `role` before letting a request through
 
-**That's it for now.** As each phase comes, you learn what that phase needs. Don't try to learn everything before starting.
+**That's it for now.** As each phase comes, you learn what that phase needs.
 
 ---
 
-## Tools to Install (Standalone PC, in This Order)
+## Tools to Install
 
-| Tool | What it does | Where to get it |
+Per `NFR-011`, install **exact pinned versions** below — not "latest" — on whichever machine each tool belongs to. Two different machines are involved now: your **dev machine** (ordinary laptop/PC, has internet) and the **standalone PC** (will become air-gapped; per `NFR-014`, download its installers on an internet-connected machine first and carry them over by USB).
+
+**On your dev machine (needs internet — this is where Claude Code/Antigravity run):**
+
+| Tool | Exact version to pin | What it does |
 |---|---|---|
-| Python 3.11+ | Runs the FastAPI backend | python.org |
-| PostgreSQL 15+ | The database | postgresql.org |
-| DBeaver | View and query your database visually (simpler than pgAdmin) | dbeaver.io |
-| Node.js 20+ | Needed to run React | nodejs.org |
-| Git | Saves versions of your code so you can undo mistakes | git-scm.com |
-| **Claude Code** *or* **Google Antigravity** | The agentic tool that reads/writes your repo — pick one (or try both, the repo structure works for either) | claude.com/product/claude-code · antigravity.google |
-| VS Code (optional) | Only needed if you choose Claude Code and want it inside an editor instead of the terminal — skip this if using Antigravity, since Antigravity already includes a full code editor | code.visualstudio.com |
+| Claude Code | latest stable | Terminal-first agentic coding tool; reads/writes your project files directly |
+| Google Antigravity | latest stable, public preview | Full agent-first IDE (VS Code fork); alternative to Claude Code, or use alongside it |
+| Node.js | 20.11.1 (LTS) | Needed if you use Antigravity's built-in browser to visually test React pages |
+| Git | latest stable | Version history / undo mistakes; both agentic tools work best inside a git repo |
+| VS Code | latest stable | Only needed if you pick Claude Code without Antigravity (Antigravity already includes a VS Code-based editor) |
 
-Install in the order listed. PostgreSQL must be installed before DBeaver.
+> ℹ️ Pick one tool or both. Claude Code is closer to the "minimum file count, heavily-commented, single-file-per-module" philosophy this guide pushes — it tends to be more surgical. Antigravity adds a built-in browser for visually checking the React UI and can run multiple agents at once (see the autonomy warning two sections up) — useful, but keep it on Agent-assisted/Review-driven mode for this project.
+
+**On the standalone PC (will become the air-gapped server):**
+
+| Tool | Exact version to pin | What it does |
+|---|---|---|
+| Python | 3.11.9 | Runs the FastAPI backend |
+| PostgreSQL | 15.7 | The database |
+| DBeaver | latest stable at time of install (`EIR-005` requires it pre-installed on the server machine; also used for the "Open in DBeaver" button, `FR-142`) | View/query the database visually |
+| Node.js | 20.11.1 (LTS) | Needed to build the React frontend for deployment |
+| Microsoft Word | whatever version the office already runs | Required client-side for opening/editing `.doc` files (`EIR-004`) — not installed by you, just confirm it's present |
+
+Install in the order listed. PostgreSQL before DBeaver. None of the AI coding tools go on this machine — only the finished, built code does, carried over by USB.
+
+> ⚠️ Reminder: per `NFR-008`/`NFR-009`, the only browser you test the frontend in is a **Chromium 109+** browser (Chrome, Edge, or Opera). Don't reach for any JS/CSS feature newer than that baseline — flag it to the agent if you're not sure.
 
 ---
 
 ## What to Do Right Now (Next Steps in Order)
 
 1. ✅ SRS done
-2. ✅ Requirements markdown ready
+2. ✅ `IODMS_requirements_v2.md` ready
 3. ✅ This workflow guide ready
-4. → Create the `IODMS/` repo folder, with `docs/IODMS_requirements_context.md` inside it. Add `CLAUDE.md` if using Claude Code.
-5. → Open the folder in Claude Code (terminal: `claude`) or as an Antigravity project, and ask for the **HLD** (Step 1 prompt above) — it writes `docs/hld.md` itself.
-6. → Ask for the **Technical Design document** (Step 2 prompt above) — it writes `docs/technical_design.md`, organised into the 4 modules: Auth, Admin & Address Book, Outward Management, Inward Management.
-7. → Begin **code generation**, one module at a time, using the prompt pattern in Step 3.
-8. → Install the remaining tools on the standalone PC while the agent is generating design documents.
+4. → Create the project folder on your dev machine, put `IODMS_requirements_v2.md` in it, `git init`, add `CLAUDE.md`/`AGENTS.md` with the rules block from the "If You're Using Claude Code or Antigravity" section
+5. → Open the folder in Claude Code or Antigravity, ask it to generate the **Design Document** (`IODMS_design.md` — Architecture + Schema + File Structure, all three sections)
+6. → Review it against the FR table and terminology reference; fix anything wrong before generating code
+7. → Begin **code generation**, one file at a time in the dependency order above — `CLAUDE.md`/`AGENTS.md` handles the context, you just name the file and review the diff each time
+8. → Install tools on the standalone PC while the agent is generating the design document
 
 ---
 
-## Rules to Remember
+## One Rule to Remember
 
-1. **Save the context file once, in the repo — don't paste it every session.** With Claude Code, `CLAUDE.md` auto-loads it for you. With Antigravity, just name the file in your first prompt of a session. AI still has no memory between sessions, but the file living on disk means you never retype it.
-2. **Keep `docs/` clean — archive superseded documents instead of leaving them next to the current one.** Once `docs/technical_design.md` exists, move any older schema-only or folder-only notes out of `docs/` (e.g. into `docs/archive/`). The agent reads everything it finds in `docs/`, so clutter there causes the same confusion that pasting old files into a chat used to.
+**Never let the agent see more than `IODMS_requirements_v2.md` and `IODMS_design.md` as project context.**
+Agentic tools have no memory between sessions either — they just re-read whatever `CLAUDE.md`/`AGENTS.md` points them to, which is why that file exists. If you ever find yourself asking the agent to create a third standalone reference document, stop: that content belongs as a new section *inside* `IODMS_design.md`. Keeping it to two files is what stops the agent from contradicting itself across a long project, and it's the same discipline that keeps the codebase itself down to 20 files instead of 30+.
